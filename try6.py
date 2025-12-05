@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-ansible_argument_spec_extractor.py
+ansible_aws_argument_spec_extractor.py
 
-Extract fully merged argument_spec from any Ansible module safely.
-Mocks AnsibleModule and AnsibleAWSModule to capture argument_spec during main() execution.
+Extract fully merged argument_spec from AWS Ansible modules safely.
+Mocks AnsibleAWSModule/AnsibleModule to capture argument_spec from main().
 Outputs JSON Schema (Draft-07).
 """
 
@@ -15,7 +15,7 @@ import importlib.util
 import types
 
 # ----------------------------
-# Mock class
+# Mock classes
 # ----------------------------
 
 class CaptureArgumentSpec:
@@ -49,44 +49,34 @@ def safe_import_module(path: str):
     spec.loader.exec_module(module)
     return module
 
-def patch_module(module):
+def extract_argument_spec(module):
     """
-    Patch the module to use CaptureArgumentSpec wherever AnsibleModule or AnsibleAWSModule is referenced.
+    Safely run module.main() to capture argument_spec using CaptureArgumentSpec.
     """
-    # Patch top-level references
-    if hasattr(module, "AnsibleModule"):
-        module.AnsibleModule = CaptureArgumentSpec
-    if hasattr(module, "AnsibleAWSModule"):
-        module.AnsibleAWSModule = CaptureArgumentSpec
-
-    # Patch any classes inheriting from AnsibleModule
+    # Patch module to use CaptureArgumentSpec
     for attr_name in dir(module):
         attr = getattr(module, attr_name)
         if isinstance(attr, type):
+            # Check for AnsibleModule or AnsibleAWSModule subclass
             bases = [b.__name__ for b in getattr(attr, "__mro__", [])]
             if "AnsibleModule" in bases or "AnsibleAWSModule" in bases:
                 setattr(module, attr_name, CaptureArgumentSpec)
 
-def extract_argument_spec(module):
-    """
-    Safely execute module.main() to capture argument_spec.
-    Fallback to class attribute if main() fails.
-    """
-    patch_module(module)
-    
-    # Run main safely
+    # Also patch top-level reference if exists
+    if hasattr(module, "AnsibleAWSModule"):
+        module.AnsibleAWSModule = CaptureArgumentSpec
+    if hasattr(module, "AnsibleModule"):
+        module.AnsibleModule = CaptureArgumentSpec
+
+    # Run main() safely to populate captured_spec
     if hasattr(module, "main"):
         try:
             module.main()
         except Exception:
-            pass  # ignore errors
+            pass  # ignore exceptions; we only want argument_spec
 
     # Return captured argument_spec
-    if getattr(CaptureArgumentSpec, "captured_spec", None):
-        return CaptureArgumentSpec.captured_spec
-
-    # Fallback: look for module-level argument_spec
-    return getattr(module, "argument_spec", {})
+    return getattr(CaptureArgumentSpec, "captured_spec", {}) or {}
 
 # ----------------------------
 # JSON Schema conversion
@@ -147,7 +137,7 @@ def convert_arg_spec_to_schema(arg_spec):
 # CLI
 # ----------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Extract Ansible module argument_spec as JSON Schema")
+    parser = argparse.ArgumentParser(description="Extract AWS Ansible module argument_spec as JSON Schema")
     parser.add_argument("module_path", help="Path to the module .py file")
     parser.add_argument("-o", "--out", help="Output JSON file (default: stdout)")
     args = parser.parse_args()
