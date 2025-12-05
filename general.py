@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """
-ansible_argument_spec_exporter.py
+ansible_argument_spec_exporter_general.py
 
-Extract fully merged argument_spec from any Ansible module safely
-and convert it to either JSON Schema (Draft-07) or TOSCA YAML.
+General-purpose extractor of argument_spec from any Ansible module,
+including provider-specific module base classes.
 
-Supports core modules, custom modules, and AWS modules.
+Outputs JSON Schema (Draft-07) or TOSCA YAML.
 """
 
 import sys
 import os
 import argparse
 import importlib.util
+import inspect
 import types
 import json
 import yaml
+import io
 
 # ----------------------------
 # Mock class to capture argument_spec
@@ -46,25 +48,35 @@ def safe_import_module(path: str):
     spec.loader.exec_module(module)
     return module
 
-def patch_module(module):
+def is_ansible_module_subclass(cls):
+    """Check if cls inherits from AnsibleModule (directly or indirectly)."""
+    if not inspect.isclass(cls):
+        return False
+    for base in inspect.getmro(cls):
+        if base.__name__ == "AnsibleModule":
+            return True
+    return False
+
+def patch_ansible_module_bases(module):
+    """Dynamically patch all classes in module that inherit from AnsibleModule."""
+    for name, obj in inspect.getmembers(module, inspect.isclass):
+        if is_ansible_module_subclass(obj):
+            setattr(module, name, CaptureArgumentSpec)
     if hasattr(module, "AnsibleModule"):
         module.AnsibleModule = CaptureArgumentSpec
-    if hasattr(module, "AnsibleAWSModule"):
-        module.AnsibleAWSModule = CaptureArgumentSpec
-    for attr_name in dir(module):
-        attr = getattr(module, attr_name)
-        if isinstance(attr, type):
-            bases = [b.__name__ for b in getattr(attr, "__mro__", [])]
-            if "AnsibleModule" in bases or "AnsibleAWSModule" in bases:
-                setattr(module, attr_name, CaptureArgumentSpec)
 
 def extract_argument_spec(module):
-    patch_module(module)
+    """Patch module bases, call main() safely with stdin patched, and return argument_spec."""
+    patch_ansible_module_bases(module)
     if hasattr(module, "main"):
+        _orig_stdin = sys.stdin
+        sys.stdin = io.StringIO('{}')  # Empty JSON to satisfy modules expecting stdin
         try:
             module.main()
         except Exception:
             pass
+        finally:
+            sys.stdin = _orig_stdin
     return getattr(CaptureArgumentSpec, "captured_spec", {}) or getattr(module, "argument_spec", {})
 
 # ----------------------------
@@ -98,7 +110,6 @@ def convert_field_to_json_schema(name, opts):
         prop["default"] = opts["default"]
     if ans_type in ("raw", "jsonarg"):
         prop.pop("type", None)
-    # nested options
     if "options" in opts and isinstance(opts["options"], dict):
         prop["type"] = "object"
         nested = convert_arg_spec_to_json_schema(opts["options"])
@@ -143,7 +154,6 @@ TOSCA_TYPE_MAP = {
 def convert_field_to_tosca(field):
     if not isinstance(field, dict):
         return {"type": "any"}
-
     prop_type = TOSCA_TYPE_MAP.get(field.get("type"), "any")
     prop = {"type": prop_type}
     if field.get("required"):

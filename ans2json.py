@@ -1,44 +1,47 @@
 #!/usr/bin/env python3
 """
-ansible_argument_spec_exporter.py
+ansible_argument_spec_extractor.py
 
-Extract fully merged argument_spec from any Ansible module safely
-and convert it to either JSON Schema (Draft-07) or TOSCA YAML.
-
-Supports core modules, custom modules, and AWS modules.
+Extract fully merged argument_spec from any Ansible module safely.
+Mocks AnsibleModule and AnsibleAWSModule to capture argument_spec during main() execution.
+Outputs JSON Schema (Draft-07).
 """
 
 import sys
 import os
+import json
 import argparse
 import importlib.util
 import types
-import json
-import yaml
 
 # ----------------------------
-# Mock class to capture argument_spec
+# Mock class
 # ----------------------------
 
 class CaptureArgumentSpec:
+    """
+    Captures argument_spec from module execution.
+    """
     captured_spec = None
 
     def __init__(self, argument_spec=None, supports_check_mode=False, *args, **kwargs):
         self.argument_spec = argument_spec or {}
         self.supports_check_mode = supports_check_mode
+        # Capture the merged argument_spec
         CaptureArgumentSpec.captured_spec = self.argument_spec
 
     def exit_json(self, **kwargs):
-        pass
+        pass  # prevent module from exiting
 
     def fail_json(self, **kwargs):
-        pass
+        pass  # prevent module from exiting
 
 # ----------------------------
 # Helpers
 # ----------------------------
 
 def safe_import_module(path: str):
+    """Safely import a Python module from a file path."""
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
     spec = importlib.util.spec_from_file_location("__ansible_module__", path)
@@ -47,10 +50,16 @@ def safe_import_module(path: str):
     return module
 
 def patch_module(module):
+    """
+    Patch the module to use CaptureArgumentSpec wherever AnsibleModule or AnsibleAWSModule is referenced.
+    """
+    # Patch top-level references
     if hasattr(module, "AnsibleModule"):
         module.AnsibleModule = CaptureArgumentSpec
     if hasattr(module, "AnsibleAWSModule"):
         module.AnsibleAWSModule = CaptureArgumentSpec
+
+    # Patch any classes inheriting from AnsibleModule
     for attr_name in dir(module):
         attr = getattr(module, attr_name)
         if isinstance(attr, type):
@@ -59,19 +68,30 @@ def patch_module(module):
                 setattr(module, attr_name, CaptureArgumentSpec)
 
 def extract_argument_spec(module):
+    """
+    Safely execute module.main() to capture argument_spec.
+    Fallback to class attribute if main() fails.
+    """
     patch_module(module)
+    
+    # Run main safely
     if hasattr(module, "main"):
         try:
             module.main()
         except Exception:
-            pass
-    return getattr(CaptureArgumentSpec, "captured_spec", {}) or getattr(module, "argument_spec", {})
+            pass  # ignore errors
+
+    # Return captured argument_spec
+    if getattr(CaptureArgumentSpec, "captured_spec", None):
+        return CaptureArgumentSpec.captured_spec
+
+    # Fallback: look for module-level argument_spec
+    return getattr(module, "argument_spec", {})
 
 # ----------------------------
-# Conversion to JSON Schema
+# JSON Schema conversion
 # ----------------------------
-
-JSON_TYPE_MAP = {
+TYPE_MAP = {
     "str": "string", "string": "string",
     "bool": "boolean", "boolean": "boolean",
     "int": "integer", "integer": "integer",
@@ -84,12 +104,12 @@ JSON_TYPE_MAP = {
     "bytes": "string",
 }
 
-def convert_field_to_json_schema(name, opts):
+def convert_field_to_schema(name, opts):
     prop = {}
     if not isinstance(opts, dict):
         return {"description": "UNRESOLVED"}, None
     ans_type = opts.get("type")
-    json_type = JSON_TYPE_MAP.get(ans_type) if ans_type else "string"
+    json_type = TYPE_MAP.get(ans_type) if ans_type else "string"
     if json_type:
         prop["type"] = json_type
     if "choices" in opts:
@@ -101,80 +121,35 @@ def convert_field_to_json_schema(name, opts):
     # nested options
     if "options" in opts and isinstance(opts["options"], dict):
         prop["type"] = "object"
-        nested = convert_arg_spec_to_json_schema(opts["options"])
+        nested = convert_arg_spec_to_schema(opts["options"])
         prop["properties"] = nested.get("properties", {})
         if "required" in nested:
             prop["required"] = nested["required"]
     if ans_type == "list" and "elements" in opts:
-        elem_type = JSON_TYPE_MAP.get(opts["elements"]) if isinstance(opts["elements"], str) else None
+        elem_type = TYPE_MAP.get(opts["elements"]) if isinstance(opts["elements"], str) else None
         prop["items"] = {"type": elem_type} if elem_type else {}
     required_here = [name] if opts.get("required") else None
     return prop, required_here
 
-def convert_arg_spec_to_json_schema(arg_spec):
+def convert_arg_spec_to_schema(arg_spec):
     schema = {"type": "object", "properties": {}}
     required_fields = []
     for k, v in arg_spec.items():
-        prop, req = convert_field_to_json_schema(k, v)
+        prop, req = convert_field_to_schema(k, v)
         schema["properties"][k] = prop
         if req:
             required_fields.extend(req)
     if required_fields:
-        schema["required"] = list(dict.fromkeys(required_fields))
+        schema["required"] = list(dict.fromkeys(required_fields))  # dedupe
     return schema
-
-# ----------------------------
-# Conversion to TOSCA
-# ----------------------------
-
-TOSCA_TYPE_MAP = {
-    "str": "string", "string": "string",
-    "bool": "boolean", "boolean": "boolean",
-    "int": "integer", "integer": "integer",
-    "float": "float",
-    "dict": "map", "mapping": "map",
-    "list": "list", "sequence": "list",
-    "path": "string",
-    "raw": "any",
-    "jsonarg": "any",
-    "bytes": "string",
-}
-
-def convert_field_to_tosca(field):
-    if not isinstance(field, dict):
-        return {"type": "any"}
-
-    prop_type = TOSCA_TYPE_MAP.get(field.get("type"), "any")
-    prop = {"type": prop_type}
-    if field.get("required"):
-        prop["required"] = True
-    if "default" in field:
-        prop["default"] = field["default"]
-    if "choices" in field:
-        prop["constraints"] = [{"valid_values": list(field["choices"])}]
-    if "options" in field and isinstance(field["options"], dict):
-        prop["type"] = "map"
-        prop["properties"] = convert_arg_spec_to_tosca(field["options"])
-    if prop_type == "list" and "elements" in field:
-        prop["entry_schema"] = {"type": TOSCA_TYPE_MAP.get(field["elements"], "any")}
-    return prop
-
-def convert_arg_spec_to_tosca(arg_spec):
-    tosca_props = {}
-    for k, v in arg_spec.items():
-        tosca_props[k] = convert_field_to_tosca(v)
-    return tosca_props
 
 # ----------------------------
 # CLI
 # ----------------------------
-
 def main():
-    parser = argparse.ArgumentParser(description="Extract Ansible module argument_spec as JSON Schema or TOSCA YAML")
+    parser = argparse.ArgumentParser(description="Extract Ansible module argument_spec as JSON Schema")
     parser.add_argument("module_path", help="Path to the module .py file")
-    parser.add_argument("-o", "--out", help="Output file (default: stdout)")
-    parser.add_argument("--format", choices=["jsonschema", "tosca"], default="jsonschema",
-                        help="Output format: jsonschema (default) or tosca")
+    parser.add_argument("-o", "--out", help="Output JSON file (default: stdout)")
     args = parser.parse_args()
 
     module = safe_import_module(args.module_path)
@@ -183,21 +158,16 @@ def main():
     if not arg_spec:
         print("WARNING: argument_spec could not be found", file=sys.stderr)
 
-    if args.format == "jsonschema":
-        schema = convert_arg_spec_to_json_schema(arg_spec)
-        schema["$schema"] = "http://json-schema.org/draft-07/schema#"
-        output = json.dumps(schema, indent=2)
-    else:
-        tosca_yaml = {"properties": convert_arg_spec_to_tosca(arg_spec)}
-        output = yaml.dump(tosca_yaml, sort_keys=False)
+    schema = convert_arg_spec_to_schema(arg_spec)
+    schema["$schema"] = "http://json-schema.org/draft-07/schema#"
 
     if args.out:
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         with open(args.out, "w", encoding="utf-8") as f:
-            f.write(output)
-        print(f"Wrote {args.format.upper()} to {args.out}")
+            json.dump(schema, f, indent=2)
+        print(f"Wrote JSON Schema to {args.out}")
     else:
-        print(output)
+        print(json.dumps(schema, indent=2))
 
 if __name__ == "__main__":
     main()

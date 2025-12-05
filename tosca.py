@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-ansible_argument_spec_exporter.py
+ansible_argument_spec_to_tosca.py
 
 Extract fully merged argument_spec from any Ansible module safely
-and convert it to either JSON Schema (Draft-07) or TOSCA YAML.
+and convert it to TOSCA YAML.
 
 Supports core modules, custom modules, and AWS modules.
 """
@@ -13,7 +13,6 @@ import os
 import argparse
 import importlib.util
 import types
-import json
 import yaml
 
 # ----------------------------
@@ -68,66 +67,10 @@ def extract_argument_spec(module):
     return getattr(CaptureArgumentSpec, "captured_spec", {}) or getattr(module, "argument_spec", {})
 
 # ----------------------------
-# Conversion to JSON Schema
+# Convert to TOSCA YAML
 # ----------------------------
 
-JSON_TYPE_MAP = {
-    "str": "string", "string": "string",
-    "bool": "boolean", "boolean": "boolean",
-    "int": "integer", "integer": "integer",
-    "float": "number",
-    "dict": "object", "mapping": "object",
-    "list": "array", "sequence": "array",
-    "path": "string",
-    "raw": None,
-    "jsonarg": None,
-    "bytes": "string",
-}
-
-def convert_field_to_json_schema(name, opts):
-    prop = {}
-    if not isinstance(opts, dict):
-        return {"description": "UNRESOLVED"}, None
-    ans_type = opts.get("type")
-    json_type = JSON_TYPE_MAP.get(ans_type) if ans_type else "string"
-    if json_type:
-        prop["type"] = json_type
-    if "choices" in opts:
-        prop["enum"] = list(opts["choices"])
-    if "default" in opts:
-        prop["default"] = opts["default"]
-    if ans_type in ("raw", "jsonarg"):
-        prop.pop("type", None)
-    # nested options
-    if "options" in opts and isinstance(opts["options"], dict):
-        prop["type"] = "object"
-        nested = convert_arg_spec_to_json_schema(opts["options"])
-        prop["properties"] = nested.get("properties", {})
-        if "required" in nested:
-            prop["required"] = nested["required"]
-    if ans_type == "list" and "elements" in opts:
-        elem_type = JSON_TYPE_MAP.get(opts["elements"]) if isinstance(opts["elements"], str) else None
-        prop["items"] = {"type": elem_type} if elem_type else {}
-    required_here = [name] if opts.get("required") else None
-    return prop, required_here
-
-def convert_arg_spec_to_json_schema(arg_spec):
-    schema = {"type": "object", "properties": {}}
-    required_fields = []
-    for k, v in arg_spec.items():
-        prop, req = convert_field_to_json_schema(k, v)
-        schema["properties"][k] = prop
-        if req:
-            required_fields.extend(req)
-    if required_fields:
-        schema["required"] = list(dict.fromkeys(required_fields))
-    return schema
-
-# ----------------------------
-# Conversion to TOSCA
-# ----------------------------
-
-TOSCA_TYPE_MAP = {
+TYPE_MAP = {
     "str": "string", "string": "string",
     "bool": "boolean", "boolean": "boolean",
     "int": "integer", "integer": "integer",
@@ -144,8 +87,9 @@ def convert_field_to_tosca(field):
     if not isinstance(field, dict):
         return {"type": "any"}
 
-    prop_type = TOSCA_TYPE_MAP.get(field.get("type"), "any")
+    prop_type = TYPE_MAP.get(field.get("type"), "any")
     prop = {"type": prop_type}
+
     if field.get("required"):
         prop["required"] = True
     if "default" in field:
@@ -156,7 +100,7 @@ def convert_field_to_tosca(field):
         prop["type"] = "map"
         prop["properties"] = convert_arg_spec_to_tosca(field["options"])
     if prop_type == "list" and "elements" in field:
-        prop["entry_schema"] = {"type": TOSCA_TYPE_MAP.get(field["elements"], "any")}
+        prop["entry_schema"] = {"type": TYPE_MAP.get(field["elements"], "any")}
     return prop
 
 def convert_arg_spec_to_tosca(arg_spec):
@@ -170,11 +114,9 @@ def convert_arg_spec_to_tosca(arg_spec):
 # ----------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Extract Ansible module argument_spec as JSON Schema or TOSCA YAML")
+    parser = argparse.ArgumentParser(description="Extract Ansible module argument_spec as TOSCA YAML")
     parser.add_argument("module_path", help="Path to the module .py file")
-    parser.add_argument("-o", "--out", help="Output file (default: stdout)")
-    parser.add_argument("--format", choices=["jsonschema", "tosca"], default="jsonschema",
-                        help="Output format: jsonschema (default) or tosca")
+    parser.add_argument("-o", "--out", help="Output YAML file (default: stdout)")
     args = parser.parse_args()
 
     module = safe_import_module(args.module_path)
@@ -183,21 +125,15 @@ def main():
     if not arg_spec:
         print("WARNING: argument_spec could not be found", file=sys.stderr)
 
-    if args.format == "jsonschema":
-        schema = convert_arg_spec_to_json_schema(arg_spec)
-        schema["$schema"] = "http://json-schema.org/draft-07/schema#"
-        output = json.dumps(schema, indent=2)
-    else:
-        tosca_yaml = {"properties": convert_arg_spec_to_tosca(arg_spec)}
-        output = yaml.dump(tosca_yaml, sort_keys=False)
+    tosca_yaml = {"properties": convert_arg_spec_to_tosca(arg_spec)}
 
     if args.out:
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         with open(args.out, "w", encoding="utf-8") as f:
-            f.write(output)
-        print(f"Wrote {args.format.upper()} to {args.out}")
+            yaml.dump(tosca_yaml, f, sort_keys=False)
+        print(f"Wrote TOSCA YAML to {args.out}")
     else:
-        print(output)
+        print(yaml.dump(tosca_yaml, sort_keys=False))
 
 if __name__ == "__main__":
     main()
