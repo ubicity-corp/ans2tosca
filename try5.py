@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-ansible_aws_argument_spec_extractor.py
+aws_ansible_argument_spec_extractor.py
 
 Extract fully merged argument_spec from AWS Ansible modules safely.
-Mocks AnsibleAWSModule/AnsibleModule to capture argument_spec from main().
+Mocks AnsibleAWSModule and captures argument_spec from main().
 Outputs JSON Schema (Draft-07).
 """
 
@@ -18,23 +18,22 @@ import types
 # Mock classes
 # ----------------------------
 
-class CaptureArgumentSpec:
+class MockAnsibleModule:
     """
-    Captures argument_spec from module execution.
+    Mocks AnsibleAWSModule/AnsibleModule to capture argument_spec
+    without executing module logic.
     """
-    captured_spec = None
-
     def __init__(self, argument_spec=None, supports_check_mode=False, *args, **kwargs):
         self.argument_spec = argument_spec or {}
         self.supports_check_mode = supports_check_mode
-        # Capture the merged argument_spec
-        CaptureArgumentSpec.captured_spec = self.argument_spec
 
     def exit_json(self, **kwargs):
-        pass  # prevent module from exiting
+        # prevent module from exiting
+        pass
 
     def fail_json(self, **kwargs):
-        pass  # prevent module from exiting
+        # prevent module from exiting
+        pass
 
 # ----------------------------
 # Helpers
@@ -46,37 +45,54 @@ def safe_import_module(path: str):
         raise FileNotFoundError(path)
     spec = importlib.util.spec_from_file_location("__ansible_module__", path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Patch module_utils.aws.core to replace AnsibleAWSModule with mock
+    import builtins
+    saved_modules = {}
+    # Patch any known module_utils references
+    try:
+        import sys as sys_modules
+        import importlib
+
+        def mock_module(name):
+            m = types.ModuleType(name)
+            m.AnsibleAWSModule = MockAnsibleModule
+            return m
+
+        # Temporarily patch sys.modules
+        for mod in list(sys_modules.modules):
+            if mod.startswith("ansible.module_utils.aws"):
+                saved_modules[mod] = sys_modules.modules[mod]
+                sys_modules.modules[mod] = mock_module(mod)
+        
+        spec.loader.exec_module(module)
+    finally:
+        # Restore patched modules
+        for k, v in saved_modules.items():
+            sys_modules.modules[k] = v
+
     return module
 
 def extract_argument_spec(module):
-    """
-    Safely run module.main() to capture argument_spec using CaptureArgumentSpec.
-    """
-    # Patch module to use CaptureArgumentSpec
-    for attr_name in dir(module):
-        attr = getattr(module, attr_name)
-        if isinstance(attr, type):
-            # Check for AnsibleModule or AnsibleAWSModule subclass
-            bases = [b.__name__ for b in getattr(attr, "__mro__", [])]
-            if "AnsibleModule" in bases or "AnsibleAWSModule" in bases:
-                setattr(module, attr_name, CaptureArgumentSpec)
-
-    # Also patch top-level reference if exists
-    if hasattr(module, "AnsibleAWSModule"):
-        module.AnsibleAWSModule = CaptureArgumentSpec
-    if hasattr(module, "AnsibleModule"):
-        module.AnsibleModule = CaptureArgumentSpec
-
-    # Run main() safely to populate captured_spec
+    """Call main() safely to capture argument_spec."""
+    # Patch AnsibleAWSModule in module if exists
     if hasattr(module, "main"):
         try:
+            # Patch module.AnsibleAWSModule to our mock
+            module.AnsibleAWSModule = MockAnsibleModule
             module.main()
         except Exception:
             pass  # ignore exceptions; we only want argument_spec
-
-    # Return captured argument_spec
-    return getattr(CaptureArgumentSpec, "captured_spec", {}) or {}
+    # Look for a class that inherits from AnsibleModule
+    for attr_name in dir(module):
+        attr = getattr(module, attr_name)
+        if isinstance(attr, type):
+            bases = [b.__name__ for b in getattr(attr, "__mro__", [])]
+            if "AnsibleModule" in bases or "AnsibleAWSModule" in bases:
+                instance = MockAnsibleModule()
+                # Some modules store argument_spec in class attribute
+                return getattr(instance, "argument_spec", {})
+    # fallback: search module-level argument_spec
+    return getattr(module, "argument_spec", {})
 
 # ----------------------------
 # JSON Schema conversion
@@ -144,7 +160,6 @@ def main():
 
     module = safe_import_module(args.module_path)
     arg_spec = extract_argument_spec(module)
-
     if not arg_spec:
         print("WARNING: argument_spec could not be found", file=sys.stderr)
 
@@ -158,6 +173,7 @@ def main():
         print(f"Wrote JSON Schema to {args.out}")
     else:
         print(json.dumps(schema, indent=2))
+
 
 if __name__ == "__main__":
     main()

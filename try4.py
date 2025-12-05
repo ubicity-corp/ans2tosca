@@ -1,47 +1,28 @@
 #!/usr/bin/env python3
 """
-ansible_aws_argument_spec_extractor.py
+ansible_argument_spec_extractor.py
 
-Extract fully merged argument_spec from AWS Ansible modules safely.
-Mocks AnsibleAWSModule/AnsibleModule to capture argument_spec from main().
-Outputs JSON Schema (Draft-07).
+General-purpose tool to extract argument_spec from any Ansible module,
+including those inheriting from AnsibleModule subclasses, safely.
+
+Outputs JSON Schema (Draft-07) for the module arguments.
 """
 
-import sys
 import os
+import sys
 import json
-import argparse
 import importlib.util
-import types
-
-# ----------------------------
-# Mock classes
-# ----------------------------
-
-class CaptureArgumentSpec:
-    """
-    Captures argument_spec from module execution.
-    """
-    captured_spec = None
-
-    def __init__(self, argument_spec=None, supports_check_mode=False, *args, **kwargs):
-        self.argument_spec = argument_spec or {}
-        self.supports_check_mode = supports_check_mode
-        # Capture the merged argument_spec
-        CaptureArgumentSpec.captured_spec = self.argument_spec
-
-    def exit_json(self, **kwargs):
-        pass  # prevent module from exiting
-
-    def fail_json(self, **kwargs):
-        pass  # prevent module from exiting
+import argparse
+import inspect
+from types import ModuleType
+from typing import Dict, Any
 
 # ----------------------------
 # Helpers
 # ----------------------------
 
-def safe_import_module(path: str):
-    """Safely import a Python module from a file path."""
+def safe_import_module(path: str) -> ModuleType:
+    """Import a Python module from path safely."""
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
     spec = importlib.util.spec_from_file_location("__ansible_module__", path)
@@ -49,34 +30,58 @@ def safe_import_module(path: str):
     spec.loader.exec_module(module)
     return module
 
-def extract_argument_spec(module):
+def find_ansible_module_class(module: ModuleType):
     """
-    Safely run module.main() to capture argument_spec using CaptureArgumentSpec.
+    Find class that inherits from AnsibleModule (or subclass).
+    Returns the class object or None.
     """
-    # Patch module to use CaptureArgumentSpec
-    for attr_name in dir(module):
-        attr = getattr(module, attr_name)
-        if isinstance(attr, type):
-            # Check for AnsibleModule or AnsibleAWSModule subclass
-            bases = [b.__name__ for b in getattr(attr, "__mro__", [])]
-            if "AnsibleModule" in bases or "AnsibleAWSModule" in bases:
-                setattr(module, attr_name, CaptureArgumentSpec)
-
-    # Also patch top-level reference if exists
-    if hasattr(module, "AnsibleAWSModule"):
-        module.AnsibleAWSModule = CaptureArgumentSpec
-    if hasattr(module, "AnsibleModule"):
-        module.AnsibleModule = CaptureArgumentSpec
-
-    # Run main() safely to populate captured_spec
-    if hasattr(module, "main"):
+    for name, obj in inspect.getmembers(module, inspect.isclass):
         try:
-            module.main()
+            for base in inspect.getmro(obj):
+                if base.__name__ == "AnsibleModule":
+                    return obj
         except Exception:
-            pass  # ignore exceptions; we only want argument_spec
+            continue
+    return None
 
-    # Return captured argument_spec
-    return getattr(CaptureArgumentSpec, "captured_spec", {}) or {}
+def instantiate_module_class(cls, extra_spec=None):
+    """
+    Instantiate the module safely, overriding exit_json/fail_json.
+    """
+    class DummyModule(cls):
+        def __init__(self, *args, **kwargs):
+            # Inject argument_spec if provided
+            if extra_spec:
+                kwargs["argument_spec"] = extra_spec
+            super().__init__(*args, **kwargs)
+
+        def exit_json(self, **kwargs): 
+            # prevent real exit
+            pass
+        def fail_json(self, **kwargs): 
+            # prevent real exit
+            pass
+
+    # create instance with empty args, supports_check_mode=False
+    instance = DummyModule(argument_spec=extra_spec or {}, supports_check_mode=False)
+    return instance
+
+def merge_argument_spec(module):
+    """
+    Extract the full argument_spec for any Ansible module.
+    """
+    # 1. Look for top-level variable
+    arg_spec = getattr(module, "argument_spec", None)
+    if arg_spec and isinstance(arg_spec, dict):
+        return arg_spec
+
+    # 2. Look for a class inheriting from AnsibleModule
+    cls = find_ansible_module_class(module)
+    if cls:
+        instance = instantiate_module_class(cls)
+        return getattr(instance, "argument_spec", {})
+
+    return {}
 
 # ----------------------------
 # JSON Schema conversion
@@ -94,7 +99,7 @@ TYPE_MAP = {
     "bytes": "string",
 }
 
-def convert_field_to_schema(name, opts):
+def convert_field_to_schema(name: str, opts: Dict[str, Any]):
     prop = {}
     if not isinstance(opts, dict):
         return {"description": "UNRESOLVED"}, None
@@ -121,7 +126,7 @@ def convert_field_to_schema(name, opts):
     required_here = [name] if opts.get("required") else None
     return prop, required_here
 
-def convert_arg_spec_to_schema(arg_spec):
+def convert_arg_spec_to_schema(arg_spec: Dict[str, Any]):
     schema = {"type": "object", "properties": {}}
     required_fields = []
     for k, v in arg_spec.items():
@@ -137,17 +142,15 @@ def convert_arg_spec_to_schema(arg_spec):
 # CLI
 # ----------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Extract AWS Ansible module argument_spec as JSON Schema")
+    parser = argparse.ArgumentParser(description="Extract Ansible module argument_spec as JSON Schema")
     parser.add_argument("module_path", help="Path to the module .py file")
     parser.add_argument("-o", "--out", help="Output JSON file (default: stdout)")
     args = parser.parse_args()
 
     module = safe_import_module(args.module_path)
-    arg_spec = extract_argument_spec(module)
-
+    arg_spec = merge_argument_spec(module)
     if not arg_spec:
         print("WARNING: argument_spec could not be found", file=sys.stderr)
-
     schema = convert_arg_spec_to_schema(arg_spec)
     schema["$schema"] = "http://json-schema.org/draft-07/schema#"
 
