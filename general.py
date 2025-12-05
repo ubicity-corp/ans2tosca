@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-ansible_argument_spec_exporter_general.py
+ansible_argument_spec_exporter_robust.py
 
-General-purpose extractor of argument_spec from any Ansible module,
-including provider-specific module base classes.
-
+Universal extractor of argument_spec from any Ansible module.
+Handles:
+- Modules inheriting from AnsibleModule
+- Modules using module_class = AnsibleModule (composition)
+- Modules that read stdin at import or in main()
 Outputs JSON Schema (Draft-07) or TOSCA YAML.
 """
 
@@ -13,7 +15,6 @@ import os
 import argparse
 import importlib.util
 import inspect
-import types
 import json
 import yaml
 import io
@@ -41,6 +42,7 @@ class CaptureArgumentSpec:
 # ----------------------------
 
 def safe_import_module(path: str):
+    """Safely import a Python module from file path."""
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
     spec = importlib.util.spec_from_file_location("__ansible_module__", path)
@@ -49,7 +51,7 @@ def safe_import_module(path: str):
     return module
 
 def is_ansible_module_subclass(cls):
-    """Check if cls inherits from AnsibleModule (directly or indirectly)."""
+    """Check if cls inherits from AnsibleModule."""
     if not inspect.isclass(cls):
         return False
     for base in inspect.getmro(cls):
@@ -57,26 +59,31 @@ def is_ansible_module_subclass(cls):
             return True
     return False
 
-def patch_ansible_module_bases(module):
-    """Dynamically patch all classes in module that inherit from AnsibleModule."""
-    for name, obj in inspect.getmembers(module, inspect.isclass):
-        if is_ansible_module_subclass(obj):
+def patch_module_classes(module):
+    """
+    Patch:
+    - Classes that inherit from AnsibleModule
+    - Classes that define module_class = AnsibleModule
+    """
+    for name, cls in inspect.getmembers(module, inspect.isclass):
+        # inheritance
+        if is_ansible_module_subclass(cls):
             setattr(module, name, CaptureArgumentSpec)
+        # module_class composition
+        elif hasattr(cls, "module_class") and getattr(cls, "module_class", None).__name__ == "AnsibleModule":
+            cls.module_class = CaptureArgumentSpec
+    # patch top-level AnsibleModule reference if present
     if hasattr(module, "AnsibleModule"):
         module.AnsibleModule = CaptureArgumentSpec
 
 def extract_argument_spec(module):
-    """Patch module bases, call main() safely with stdin patched, and return argument_spec."""
-    patch_ansible_module_bases(module)
+    """Patch classes and call main() to capture argument_spec."""
+    patch_module_classes(module)
     if hasattr(module, "main"):
-        _orig_stdin = sys.stdin
-        sys.stdin = io.StringIO('{}')  # Empty JSON to satisfy modules expecting stdin
         try:
             module.main()
         except Exception:
             pass
-        finally:
-            sys.stdin = _orig_stdin
     return getattr(CaptureArgumentSpec, "captured_spec", {}) or getattr(module, "argument_spec", {})
 
 # ----------------------------
@@ -180,15 +187,21 @@ def convert_arg_spec_to_tosca(arg_spec):
 # ----------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Extract Ansible module argument_spec as JSON Schema or TOSCA YAML")
+    parser = argparse.ArgumentParser(description="Universal Ansible module argument_spec extractor")
     parser.add_argument("module_path", help="Path to the module .py file")
     parser.add_argument("-o", "--out", help="Output file (default: stdout)")
     parser.add_argument("--format", choices=["jsonschema", "tosca"], default="jsonschema",
                         help="Output format: jsonschema (default) or tosca")
     args = parser.parse_args()
 
-    module = safe_import_module(args.module_path)
-    arg_spec = extract_argument_spec(module)
+    # Patch stdin BEFORE importing module
+    _orig_stdin = sys.stdin
+    sys.stdin = io.StringIO('{}')  # empty JSON
+    try:
+        module = safe_import_module(args.module_path)
+        arg_spec = extract_argument_spec(module)
+    finally:
+        sys.stdin = _orig_stdin
 
     if not arg_spec:
         print("WARNING: argument_spec could not be found", file=sys.stderr)
