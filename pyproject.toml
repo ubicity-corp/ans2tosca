@@ -1,0 +1,52 @@
+[build-system]
+requires = [
+    "setuptools>=61.0",
+    "setuptools-scm[toml]>=8",
+    "wheel",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ans2tosca"
+description = "file: README.md"
+readme = "README.md"
+# The 'version' field is set as dynamic because it uses attr:
+dynamic = ["version"]
+license = {text = "Apache License Version 2.0"}
+authors = [
+    { name = "Chris Lauwers", email = "lauwers@ubicity.com" },
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "ansible",
+]
+requires-python = ">=3.7" # Derived from classifiers
+
+[project.scripts]
+ans2tosca = "ans2tosca.__main__:main"
+
+[project.urls]
+# 'Homepage' is a common convention, but any label works.
+Homepage = "https://github.com/ubicity-corp/ans2tosca"
+Repository = "https://github.com/ubicity-corp/ans2tosca"
+
+[tool.setuptools]
+# Defines dynamic metadata resolution (for version = attr: ans2tosca.__version__)
+dynamic = {version = {attr = "ans2tosca.__version__"}}
+
+[tool.setuptools.packages.find]
+
+[tool.setuptools_scm]
+# Optional custom configuration goes here
