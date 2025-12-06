@@ -1,3 +1,30 @@
+"""Extract argument specs from Ansible modules. 
+
+This can be challenging for modules like AWS modules (e.g.,
+ec2_instance, s3_bucket) or AnsibleAWSModule subclasses that don't
+store the argument_spec as a simple class attribute or top-level
+variable at import time. Instead, The actual argument_spec is
+constructed inside the module’s main() function.  Sometimes it calls
+helper functions from module_utils/aws/core.py to merge base AWS
+args. The merged argument_spec does not exist until the module runs or
+the constructor runs with valid parameters.
+
+For modules where the argument spec only exists inside main() or the
+constructor at runtime, the module's main has to be called. However,
+safe import + safe instantiation is not enough, because constructors
+may fail without required kwargs.
+
+Instead, we run the module in a controlled sandbox that executes the
+module with mocked AnsibleModule (like the pytest-ansible
+strategy). This mocked module patches
+
+    AnsibleModule.__init__
+    AnsibleModule.exit_json
+    AnsibleModule.fail_json
+
+This will then allow us to call main(), which will populate the merged
+argument_spec.
+"""
 import sys
 import os
 import importlib.util
