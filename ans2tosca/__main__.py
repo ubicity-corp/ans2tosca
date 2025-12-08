@@ -56,7 +56,7 @@ def main():
     parser.add_argument("playbook", help="Path to the Ansible playbook")
     parser.add_argument('-v', '--version', action='version', version='%(prog)s ' + str(__version__))
     parser.add_argument("-o", "--output", help="Output file (default: stdout)")
-    parser.add_argument("--format", choices=["jsonschema", "tosca"], default="tosca",
+    parser.add_argument("--format", choices=["tosca", "jsonschema"], default="tosca",
                         help="Output format: tosca (default) or jsonschema")
     args = parser.parse_args()
 

@@ -2,35 +2,37 @@
 
 This tool converts Ansible playbooks to TOSCA as follows:
 
+- For each task in the playbook, it finds the corresponding Ansible
+  module that is used to execute that task.
+- It then extracts the fully merged `argument_spec` of that module.
+- It converts this argument spec to property definitions in a
+  corresponding TOSCA node type.
 - It creates a TOSCA service template that can be used to invoke the
   playbook.
-- It uses TOSCA types that are created automatically based on the
-  Ansible modules that are used to process the playbook. Specifically,
-  the tool extracts the fully merged `argument_spec` from any Ansible
-  module safely and converts to property definitions in a
-  corresponding TOSCA node types.
 
-The current version is limited to creating TOSCA property definitions
-based on the `argument_spec` in Ansible modules. Full support for
-Ansible playbooks is under development.
+The current version is limited to creating TOSCA types with the
+corresponding property definitions based on the `argument_spec` in
+Ansible modules. Full support for creating TOSCA service templates is
+under development.
 
 ## Using `ans2tosca`
 
 The following shows the top-level commands exposed by the `ans2tosca`
 as well as the available command line options:
 ```
-usage: ans2tosca [-h] [-v] [-o OUT] [--format {jsonschema,tosca}] module_path
+Usage: ans2tosca [-h] [-v] [-o OUTPUT] [--format {tosca,jsonschema}] playbook
 
-Convert Ansible module argument_spec to TOSCA or JSON Schema
+Convert Ansible playbook to TOSCA
 
 positional arguments:
-  module_path           Path to the module .py file
+  playbook              Path to the Ansible playbook
 
 options:
   -h, --help            show this help message and exit
   -v, --version         show program's version number and exit
-  -o OUT, --out OUT     Output file (default: stdout)
-  --format {jsonschema,tosca}
+  -o OUTPUT, --output OUTPUT
+                        Output file (default: stdout)
+  --format {tosca,jsonschema}
                         Output format: tosca (default) or jsonschema
 ```
 
