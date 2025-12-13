@@ -53,7 +53,6 @@ class CaptureArgumentSpec:
 # ----------------------------
 
 def patch_module(module):
-    print(f"PATCH {str(module)}")
     if hasattr(module, "AnsibleModule"):
         module.AnsibleModule = CaptureArgumentSpec
     elif hasattr(module, "AnsibleK8SModule"):
