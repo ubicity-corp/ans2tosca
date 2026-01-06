@@ -12,26 +12,6 @@ from pathlib import Path
 from collections import defaultdict
 
 
-def get_var_type(value):
-    """Return a human-readable type name for a variable."""
-    if isinstance(value, bool):
-        return "boolean"
-    elif isinstance(value, int):
-        return "integer"
-    elif isinstance(value, float):
-        return "float"
-    elif isinstance(value, str):
-        return "string"
-    elif isinstance(value, list):
-        return f"list (length: {len(value)})"
-    elif isinstance(value, dict):
-        return f"dictionary (keys: {len(value)})"
-    elif value is None:
-        return "null/None"
-    else:
-        return type(value).__name__
-
-
 def get_tosca_type(value):
     """Convert Python type to TOSCA type."""
     if isinstance(value, bool):
@@ -561,34 +541,41 @@ def analyze_playbook(filepath):
         sys.exit(1)
 
 
-def print_variable_report(variables, show_values=False, recursive=False):
-    """Print a formatted report of variables and their types."""
-    if not variables:
-        print("No variables found in playbook.")
-        return
+def playbook_name_to_camel_case(playbook_path):
+    """
+    Convert a playbook filename to CamelCase.
     
-    # Flatten variables if recursive mode is enabled
-    if recursive:
-        variables = flatten_variables(variables)
+    Examples:
+    - "deploy_web_server.yml" -> "DeployWebServer"
+    - "install-nginx.yaml" -> "InstallNginx"
+    - "setup_database.yml" -> "SetupDatabase"
+    - "my_playbook" -> "MyPlaybook"
     
-    print(f"\n{'Variable Name':<60} {'Type':<30} {'Value' if show_values else ''}")
-    print("=" * (90 if not show_values else 150))
+    Args:
+        playbook_path: Path to the playbook file (can include directory)
     
-    for var_name, var_value in sorted(variables.items()):
-        var_type = get_var_type(var_value)
+    Returns:
+        CamelCase string suitable for a node type name
+    """
+    # Extract just the filename without path
+    filename = Path(playbook_path).name
+    
+    # Remove file extension (.yml, .yaml, etc.)
+    name_without_ext = Path(filename).stem
+    
+    # Replace common separators with spaces
+    # Handle: underscores, hyphens, dots
+    normalized = name_without_ext.replace('_', ' ').replace('-', ' ').replace('.', ' ')
+    
+    # Split into words and capitalize each
+    words = normalized.split()
+    
+    # Convert to CamelCase
+    camel_case = ''.join(word.capitalize() for word in words)
+    
+    return camel_case
+
         
-        if show_values:
-            # Truncate long values
-            value_str = str(var_value)
-            if len(value_str) > 50:
-                value_str = value_str[:47] + "..."
-            print(f"{var_name:<60} {var_type:<30} {value_str}")
-        else:
-            print(f"{var_name:<60} {var_type:<30}")
-    
-    print(f"\nTotal variables found: {len(variables)}")
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Analyze Ansible playbook variables and report their types"
@@ -598,29 +585,8 @@ def main():
         help="Path to the Ansible playbook file"
     )
     parser.add_argument(
-        "-v", "--values",
-        action="store_true",
-        help="Show variable values along with types"
-    )
-    parser.add_argument(
-        "-r", "--recursive",
-        action="store_true",
-        help="Recursively show types of nested dictionary and list items"
-    )
-    parser.add_argument(
-        "-t", "--tosca",
-        action="store_true",
-        help="Generate TOSCA data type definitions"
-    )
-    parser.add_argument(
-        "-n", "--node-type",
-        action="store_true",
-        help="Generate TOSCA node type definition with interface (use with -t)"
-    )
-    parser.add_argument(
-        "--node-name",
-        default="AnsibleNode",
-        help="Name for the generated node type (default: AnsibleNode)"
+        "-n", "--node-name",
+        help="Optional name for the generated node type"
     )
     parser.add_argument(
         "-o", "--output",
@@ -631,40 +597,26 @@ def main():
     
     variables = analyze_playbook(args.playbook)
     
-    if args.tosca:
-        # Generate TOSCA data types
-        tosca_types = generate_tosca_data_types(variables)
-        tosca_node_type = None
-        
-        # Generate node type if requested
-        if args.node_type:
-            tosca_node_type = generate_tosca_node_type(variables, args.playbook, args.node_name)
-        
-        tosca_output = format_tosca_output(tosca_types, tosca_node_type, args.node_name)
-        
-        if args.output:
-            with open(args.output, 'w') as f:
-                f.write(tosca_output)
-            print(f"TOSCA definitions written to: {args.output}")
-        else:
-            print(tosca_output)
-    elif args.json:
-        import json
-        # Flatten for JSON output if recursive
-        if args.recursive:
-            variables = flatten_variables(variables)
-        
-        output = {
-            var_name: {
-                "type": get_var_type(var_value),
-                "value": var_value if args.values else None
-            }
-            for var_name, var_value in variables.items()
-        }
-        print(json.dumps(output, indent=2, default=str))
+    # Generate TOSCA data types
+    tosca_types = generate_tosca_data_types(variables)
+
+    # Generate node type
+    if args.node_name:
+        node_type_name = args.node_name
     else:
-        print(f"\nAnalyzing playbook: {args.playbook}")
-        print_variable_report(variables, show_values=args.values, recursive=args.recursive)
+        # Auto-generate from playbook filename
+        node_type_name = playbook_name_to_camel_case(args.playbook)    
+    tosca_node_type = generate_tosca_node_type(variables, args.playbook, node_type_name)
+
+    # Create TOSCA definitions
+    tosca_output = format_tosca_output(tosca_types, tosca_node_type, node_type_name)
+
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(tosca_output)
+        print(f"TOSCA definitions written to: {args.output}")
+    else:
+        print(tosca_output)
 
 
 if __name__ == "__main__":
