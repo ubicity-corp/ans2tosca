@@ -1,45 +1,19 @@
 # Ansible to TOSCA Converter
 
-New TOSCA Features:
-Automatic type inference - Converts Ansible variable structures to TOSCA data types:
+This tool converts Ansible playbooks to TOSCA as follows:
 
-Python types → TOSCA types (string, integer, boolean, float, list, map)
-Nested dictionaries → Custom TOSCA data types
-Lists of objects → Custom entry_schema types
+- For each task in the playbook, it finds the corresponding Ansible
+  module that is used to execute that task.
+- It then extracts the fully merged `argument_spec` of that module.
+- It converts this argument spec to property definitions in a
+  corresponding TOSCA node type.
+- It creates a TOSCA service template that can be used to invoke the
+  playbook.
 
-Hierarchical type definitions - Creates proper TOSCA type hierarchy:
-
-Nested structures become separate, reusable data types
-All types derive from tosca.datatypes.Root
-Generates proper entry_schema for lists
-
-Output options:
-
-Print to console or save to file with -o
-Generates complete TOSCA YAML with proper version header
-
-This tool converts Ansible playbooks to TOSCA as follows: Instead of
-creating a topology template, create a TOSCA node type definition and
-instead of creating input definitions, create property definitions for
-that node type. Then create an interface definition for that node type
-that uses the playbook as the implementation for the create operation
-and that uses get_property functions to define the inputs to the
-create operation.
-
-
-New Node Type Generation:
-Properties instead of inputs - Variables become node type properties with defaults
-Interface definition - Creates a Standard interface with:
-
-create operation that uses the playbook as implementation
-Operation inputs that use get_property functions to reference node properties
-Proper TOSCA structure with primary implementation
-
-Node type structure:
-
-Derives from tosca.nodes.Root
-Includes all properties with types and defaults
-Maps properties to operation inputs via get_property functions
+The current version is limited to creating TOSCA types with the
+corresponding property definitions based on the `argument_spec` in
+Ansible modules. Full support for creating TOSCA service templates is
+under development.
 
 ## Using `ans2tosca`
 
