@@ -70,9 +70,9 @@ def convert_jinja2_to_tosca(value, use_get_property=False):
     Handles variable references like {{ username }} and constructs TOSCA concat/get_input or get_property.
     
     Examples:
-    - "/home/{{ username }}" -> { concat: ['/home/', { get_input: username }] }
-    - "{{ username }}_backup" -> { concat: [{ get_input: username }, '_backup'] }
-    - "prefix_{{ var1 }}_{{ var2 }}_suffix" -> { concat: ['prefix_', { get_input: var1 }, '_', { get_input: var2 }, '_suffix'] }
+    - "/home/{{ username }}" -> { $concat: ['/home/', { $get_input: username }] }
+    - "{{ username }}_backup" -> { $concat: [{ $get_input: username }, '_backup'] }
+    - "prefix_{{ var1 }}_{{ var2 }}_suffix" -> { $concat: ['prefix_', { $get_input: var1 }, '_', { $get_input: var2 }, '_suffix'] }
     
     Args:
         value: The string value to convert
@@ -94,9 +94,9 @@ def convert_jinja2_to_tosca(value, use_get_property=False):
     if len(matches) == 1 and matches[0].group(0) == value.strip():
         var_name = matches[0].group(1)
         if use_get_property:
-            return True, {'get_property': ['SELF', var_name]}
+            return True, {'$get_property': ['SELF', var_name]}
         else:
-            return True, {'get_input': var_name}
+            return True, {'$get_input': var_name}
     
     # Build concat parts
     concat_parts = []
@@ -115,9 +115,9 @@ def convert_jinja2_to_tosca(value, use_get_property=False):
         
         # Add get_input or get_property for the variable
         if use_get_property:
-            concat_parts.append({'get_property': ['SELF', var_name]})
+            concat_parts.append({'$get_property': ['SELF', var_name]})
         else:
-            concat_parts.append({'get_input': var_name})
+            concat_parts.append({'$get_input': var_name})
         
         last_end = end
     
@@ -131,7 +131,7 @@ def convert_jinja2_to_tosca(value, use_get_property=False):
     if len(concat_parts) == 1:
         return True, concat_parts[0]
     else:
-        return True, {'concat': concat_parts}
+        return True, {'$concat': concat_parts}
 
 
 def extract_vars_from_playbook(playbook_data):

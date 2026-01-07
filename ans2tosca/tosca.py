@@ -99,7 +99,6 @@ def generate_tosca_data_types(variables, base_name="AnsibleData"):
                 
                 properties[field_name] = {
                     'type': nested_type_name,
-                    'required': False,
                     'default': field_value  # Include default value
                 }
             elif isinstance(field_value, list):
@@ -113,7 +112,6 @@ def generate_tosca_data_types(variables, base_name="AnsibleData"):
                     properties[field_name] = {
                         'type': 'list',
                         'entry_schema': {'type': list_item_type},
-                        'required': False,
                         'default': field_value  # Include default value
                     }
                 else:
@@ -122,19 +120,16 @@ def generate_tosca_data_types(variables, base_name="AnsibleData"):
                     properties[field_name] = {
                         'type': 'list',
                         'entry_schema': {'type': entry_type},
-                        'required': False,
                         'default': field_value  # Include default value
                     }
             else:
                 # Simple type
                 properties[field_name] = {
                     'type': get_tosca_type(field_value),
-                    'required': False,
                     'default': field_value  # Include default value
                 }
         
         return {
-            'derived_from': 'tosca.datatypes.Root',
             'properties': properties
         }
     
@@ -179,7 +174,6 @@ def generate_tosca_node_type(variables, playbook_path):
         
         prop_def = {
             'type': get_tosca_type(var_value),
-            'required': not has_default  # Required if no default value
         }
         
         # Convert any get_input references to get_property for node type context
@@ -190,7 +184,7 @@ def generate_tosca_node_type(variables, playbook_path):
             prop_def['default'] = converted_value
         
         # For complex types, reference the generated data type
-        if isinstance(converted_value, dict) and not isinstance(converted_value, dict) or (isinstance(converted_value, dict) and 'get_property' not in converted_value and 'concat' not in converted_value):
+        if isinstance(converted_value, dict) and not isinstance(converted_value, dict) or (isinstance(converted_value, dict) and '$get_property' not in converted_value and 'concat' not in converted_value):
             prop_def['type'] = f'AnsibleData_{prop_name}'
         elif isinstance(converted_value, list) and not isinstance(converted_value, dict):
             if converted_value and isinstance(converted_value[0], dict):
@@ -201,7 +195,7 @@ def generate_tosca_node_type(variables, playbook_path):
                 prop_def['entry_schema'] = {'type': infer_list_entry_type(converted_value)}
         
         # Add description based on type
-        if isinstance(converted_value, dict) and 'concat' not in converted_value and 'get_property' not in converted_value:
+        if isinstance(converted_value, dict) and 'concat' not in converted_value and '$get_property' not in converted_value:
             prop_def['description'] = f'Configuration for {prop_name}'
         elif isinstance(converted_value, list):
             prop_def['description'] = f'List of {prop_name}'
@@ -211,24 +205,25 @@ def generate_tosca_node_type(variables, playbook_path):
         properties[prop_name] = prop_def
     
     # Generate property inputs for the create operation
-    # Map each property to get_property function
+    # Map each property to $get_property function
     operation_inputs = {}
     for prop_name in properties.keys():
-        operation_inputs[prop_name] = {'get_property': ['SELF', prop_name]}
+        operation_inputs[prop_name] = {'$get_property': ['SELF', prop_name]}
     
     # Create the node type definition
     node_type = {
-        'derived_from': 'tosca.nodes.Root',
+        'derived_from': 'Root',
         'description': f'Node type generated from Ansible playbook {playbook_path}',
         'properties': properties,
         'interfaces': {
             'Standard': {
-                'type': 'tosca.interfaces.node.lifecycle.Standard',
                 'operations': {
                     'create': {
                         'implementation': {
-                            'primary': playbook_path,
-                            'dependencies': []
+                            'primary': {
+                                'file': playbook_path,
+                                'type': 'Ansible'
+                                }
                         },
                         'inputs': operation_inputs
                     }
@@ -246,9 +241,9 @@ def convert_get_input_to_get_property(value):
     This is needed when converting from inputs (topology template) to properties (node type).
     """
     if isinstance(value, dict):
-        if 'get_input' in value:
+        if '$get_input' in value:
             # Convert get_input to get_property
-            return {'get_property': ['SELF', value['get_input']]}
+            return {'$get_property': ['SELF', value['$get_input']]}
         elif 'concat' in value:
             # Process concat array
             new_concat = []
@@ -267,8 +262,8 @@ def convert_get_input_to_get_property(value):
 def format_tosca_output(tosca_types, tosca_node_type=None, node_type_name="AnsibleNode"):
     """Format TOSCA types and node type as YAML string."""
     tosca_document = {
-        'tosca_definitions_version': 'tosca_simple_yaml_1_3',
-        'description': 'TOSCA wrapper for Ansible playbook'
+        'tosca_definitions_version': 'tosca_2_0',
+        'description': 'TOSCA node type wrapper for Ansible playbook'
     }
     
     if tosca_types:
@@ -280,37 +275,6 @@ def format_tosca_output(tosca_types, tosca_node_type=None, node_type_name="Ansib
         }
     
     return yaml.dump(tosca_document, default_flow_style=False, sort_keys=False, width=120)
-    """
-    Recursively flatten nested dictionaries and list items.
-    Returns a flat dictionary with dot-notation keys.
-    """
-    items = {}
-    
-    for key, value in variables.items():
-        new_key = f"{parent_key}{sep}{key}" if parent_key else key
-        
-        if isinstance(value, dict):
-            # Add the dictionary itself
-            items[new_key] = value
-            # Recursively flatten nested dictionaries
-            items.update(flatten_variables(value, new_key, sep=sep))
-        elif isinstance(value, list):
-            # Add the list itself
-            items[new_key] = value
-            # Process list items
-            for idx, item in enumerate(value):
-                list_key = f"{new_key}[{idx}]"
-                if isinstance(item, dict):
-                    items[list_key] = item
-                    items.update(flatten_variables(item, list_key, sep=sep))
-                elif isinstance(item, list):
-                    items[list_key] = item
-                else:
-                    items[list_key] = item
-        else:
-            items[new_key] = value
-    
-    return items
 
 
 def create_tosca_file(variables, playbook_path, node_type_name):
