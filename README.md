@@ -85,12 +85,12 @@ your virtual environment:
     pip install -U pip 
 
 Next, download the latest release from
-[`https://github.com/ubicity-corp/ans2tosca/releases/download/v0.0.1/ans2tosca-0.0.1-py3-none-any.whl`](https://github.com/ubicity-corp/ans2tosca/releases/download/v0.0.1/ans2tosca-0.0.1-py3-none-any.whl)
+[`https://github.com/ubicity-corp/ans2tosca/releases/download/v0.0.2/ans2tosca-0.0.2-py3-none-any.whl`](https://github.com/ubicity-corp/ans2tosca/releases/download/v0.0.2/ans2tosca-0.0.2-py3-none-any.whl)
 and install it in the activated virtual environment using the downloaded
 wheel file:
 
 ```
-pip install ans2tosca-0.0.1-py3-none-any.whl
+pip install ans2tosca-0.0.2-py3-none-any.whl
 ```
 You can verify that the ans2tosca software has been installed 
 by running the following command in your virtual environment:
