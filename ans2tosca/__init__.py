@@ -20,3 +20,5 @@ except PackageNotFoundError:
 
 # The root_path="." is important. 
 # It tells setuptools_scm to look one level up from __init__.py 
+
+#print(f"Package initialized. Version: {__version__}")

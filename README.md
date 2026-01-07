@@ -1,65 +1,63 @@
 # Ansible to TOSCA Converter
 
-New TOSCA Features:
-Automatic type inference - Converts Ansible variable structures to TOSCA data types:
+## TOSCA Node Type Creation
+This tool converts Ansible playbooks to TOSCA files as follows:
 
-Python types → TOSCA types (string, integer, boolean, float, list, map)
-Nested dictionaries → Custom TOSCA data types
-Lists of objects → Custom entry_schema types
+- A TOSCA node type is created that acts as a *wrapper* around the
+  playbook.
+- Playbook variables are converted to TOSCA property definitions for
+  the newly created node type. Default values are assigned as
+  specified in the playbook.
+- A Standard interface is defined on the node type with a `create`
+  operation that uses the playbook as its implementation artifact.
+- Operation inputs are defined for the `create` operation that use
+  `$get_property` functions to reference node properties
 
-Hierarchical type definitions - Creates proper TOSCA type hierarchy:
+## TOSCA Data Type Creation
 
-Nested structures become separate, reusable data types
-All types derive from tosca.datatypes.Root
-Generates proper entry_schema for lists
+- Property definitions in the newly created TOSCA node types use TOSCA
+  data types that are inferred from the types of the playbook
+  variables.
+- Primarty types are converted directly to their corresponding TOSCA
+  types (string, integer, boolean, float, list, map).
+- Playbook variables that are dictionaries are converted to complex
+  TOSCA data types. Nested structures become separate, reusable TOSCA
+  data types.
+- For lists of dictionaries, custom `entry_schema` types are created. 
 
-Output options:
+## Service Template Creation
 
-Print to console or save to file with -o
-Generates complete TOSCA YAML with proper version header
+> This feature has not yet been implemented.
 
-This tool converts Ansible playbooks to TOSCA as follows: Instead of
-creating a topology template, create a TOSCA node type definition and
-instead of creating input definitions, create property definitions for
-that node type. Then create an interface definition for that node type
-that uses the playbook as the implementation for the create operation
-and that uses get_property functions to define the inputs to the
-create operation.
+Several Ansible playbooks may be required to configure devices or to
+deploy services. These playbooks will be combined into a single TOSCA
+service template as follows:
 
-
-New Node Type Generation:
-Properties instead of inputs - Variables become node type properties with defaults
-Interface definition - Creates a Standard interface with:
-
-create operation that uses the playbook as implementation
-Operation inputs that use get_property functions to reference node properties
-Proper TOSCA structure with primary implementation
-
-Node type structure:
-
-Derives from tosca.nodes.Root
-Includes all properties with types and defaults
-Maps properties to operation inputs via get_property functions
+- For each of the playbooks, a corresponding TOSCA node type is
+  defined.
+- For each of the playbooks, a node template of the newly created
+  TOSCA type is created.
+- Execution ordering between the playbooks maps to `DependsOn`
+  relationships between the node templates.
 
 ## Using `ans2tosca`
 
 The following shows the top-level commands exposed by the `ans2tosca`
 as well as the available command line options:
 ```
-Usage: ans2tosca [-h] [-v] [-o OUTPUT] [--format {tosca,jsonschema}] playbook
+usage: ans2tosca [-h] [-n NODE_NAME] [-o OUTPUT] playbook
 
-Convert Ansible playbook to TOSCA
+Convert Ansible playbook to TOSCA file
 
 positional arguments:
-  playbook              Path to the Ansible playbook
+  playbook              Path to the Ansible playbook file
 
 options:
   -h, --help            show this help message and exit
-  -v, --version         show program's version number and exit
+  -n NODE_NAME, --node-name NODE_NAME
+                        Optional name for the generated node type
   -o OUTPUT, --output OUTPUT
-                        Output file (default: stdout)
-  --format {tosca,jsonschema}
-                        Output format: tosca (default) or jsonschema
+                        Optional output file path. Defaults to <stderr>
 ```
 
 ## Installing `ans2tosca`

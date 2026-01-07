@@ -49,7 +49,7 @@ def playbook_name_to_camel_case(playbook_path):
         
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyze Ansible playbook variables and report their types"
+        description="Convert Ansible playbook to TOSCA file"
     )
     parser.add_argument(
         "playbook",
@@ -61,7 +61,7 @@ def main():
     )
     parser.add_argument(
         "-o", "--output",
-        help="Output file path"
+        help="Optional output file path. Defaults to <stderr>"
     )
 
     # Parse command line arguments
