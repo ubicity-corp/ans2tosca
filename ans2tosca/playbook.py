@@ -89,7 +89,8 @@ def convert_jinja2_to_tosca(value):
     if not matches:
         return False, value
     
-    # If the entire string is just a single variable reference, use get_property directly
+    # If the entire string is just a single variable reference, use
+    # get_property directly
     if len(matches) == 1 and matches[0].group(0) == value.strip():
         var_name = matches[0].group(1)
         return True, {'$get_property': ['SELF', var_name]}

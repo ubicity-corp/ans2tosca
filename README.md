@@ -27,7 +27,19 @@ This tool converts Ansible playbooks to TOSCA files as follows:
 
 ## Service Template Creation
 
-> This feature has not yet been implemented.
+The current version of `ans2tosca` creates a TOSCA service template
+that defines:
+
+- Inputs that correspond to the properties defined in the TOSCA node
+  type created for the Ansible playbook. If those property definitions
+  define a `default` value, the corresponding input definition is
+  marked as optional.
+- One single node template of the TOSCA node type created for the
+  Ansible playbook. For each of the properties defined in the node
+  type, a property assignment is created that uses a `$get_input`
+  function to retrieve a corresponding input alue.
+
+> The following feature is not yet implemented. 
 
 Several Ansible playbooks may be required to configure devices or to
 deploy services. These playbooks will be combined into a single TOSCA
