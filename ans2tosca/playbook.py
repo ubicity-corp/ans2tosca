@@ -64,19 +64,18 @@ def extract_jinja2_default(value):
     return False, value, None
 
 
-def convert_jinja2_to_tosca(value, use_get_property=False):
+def convert_jinja2_to_tosca(value):
     """
     Convert Jinja2 expressions to TOSCA function calls.
-    Handles variable references like {{ username }} and constructs TOSCA concat/get_input or get_property.
+    Handles variable references like {{ username }} and constructs TOSCA concat/get_property.
     
     Examples:
-    - "/home/{{ username }}" -> { $concat: ['/home/', { $get_input: username }] }
-    - "{{ username }}_backup" -> { $concat: [{ $get_input: username }, '_backup'] }
-    - "prefix_{{ var1 }}_{{ var2 }}_suffix" -> { $concat: ['prefix_', { $get_input: var1 }, '_', { $get_input: var2 }, '_suffix'] }
+    - "/home/{{ username }}" -> { $concat: ['/home/', { $get_property: username }] }
+    - "{{ username }}_backup" -> { $concat: [{ $get_property: username }, '_backup'] }
+    - "prefix_{{ var1 }}_{{ var2 }}_suffix" -> { $concat: ['prefix_', { $get_property: var1 }, '_', { $get_property: var2 }, '_suffix'] }
     
     Args:
         value: The string value to convert
-        use_get_property: If True, use get_property instead of get_input
     
     Returns: (converted, tosca_value) where converted is True if conversion happened
     """
@@ -90,13 +89,10 @@ def convert_jinja2_to_tosca(value, use_get_property=False):
     if not matches:
         return False, value
     
-    # If the entire string is just a single variable reference, use get_input/get_property directly
+    # If the entire string is just a single variable reference, use get_property directly
     if len(matches) == 1 and matches[0].group(0) == value.strip():
         var_name = matches[0].group(1)
-        if use_get_property:
-            return True, {'$get_property': ['SELF', var_name]}
-        else:
-            return True, {'$get_input': var_name}
+        return True, {'$get_property': ['SELF', var_name]}
     
     # Build concat parts
     concat_parts = []
@@ -113,12 +109,8 @@ def convert_jinja2_to_tosca(value, use_get_property=False):
             if literal:
                 concat_parts.append(literal)
         
-        # Add get_input or get_property for the variable
-        if use_get_property:
-            concat_parts.append({'$get_property': ['SELF', var_name]})
-        else:
-            concat_parts.append({'$get_input': var_name})
-        
+        # Add get_property for the variable
+        concat_parts.append({'$get_property': ['SELF', var_name]})
         last_end = end
     
     # Add any remaining literal string

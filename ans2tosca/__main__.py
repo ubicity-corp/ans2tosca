@@ -8,9 +8,57 @@ import sys
 import argparse
 from pathlib import Path
 
+import re
+
 import ans2tosca.playbook as playbook
 import ans2tosca.tosca as tosca
 
+
+def playbook_name_to_kebab_case(playbook_name: str) -> str:
+    """
+    Convert an Ansible playbook filename to kebab-case.
+    
+    Strips directories, file extensions, and converts the remaining name to kebab-case.
+    
+    Args:
+        playbook_name: The playbook filename (e.g., 'deploy_app.yml', 'playbooks/SetupServer.yaml')
+    
+    Returns:
+        Kebab-case version of the name (e.g., 'deploy-app', 'setup-server')
+    
+    Examples:
+        >>> playbook_name_to_kebab_case('deploy_app.yml')
+        'deploy-app'
+        >>> playbook_name_to_kebab_case('playbooks/SetupServer.yaml')
+        'setup-server'
+        >>> playbook_name_to_kebab_case('/path/to/configure-database.yml')
+        'configure-database'
+        >>> playbook_name_to_kebab_case('MyPlayBook.YML')
+        'my-play-book'
+    """
+    # Strip directories and file extension using pathlib
+    name_without_ext = Path(playbook_name).stem
+    
+    # Handle CamelCase by inserting hyphens before uppercase letters
+    # that follow lowercase letters or numbers
+    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1-\2', name_without_ext)
+    
+    # Handle sequences like "HTTPServer" -> "HTTP-Server"
+    s2 = re.sub('([a-z0-9])([A-Z])', r'\1-\2', s1)
+    
+    # Replace underscores and spaces with hyphens
+    s3 = s2.replace('_', '-').replace(' ', '-')
+    
+    # Convert to lowercase
+    kebab = s3.lower()
+    
+    # Remove any duplicate hyphens
+    kebab = re.sub(r'-+', '-', kebab)
+    
+    # Strip leading/trailing hyphens
+    kebab = kebab.strip('-')
+    
+    return kebab
 
 def playbook_name_to_camel_case(playbook_path):
     """
@@ -72,11 +120,14 @@ def main():
         # Auto-generate from playbook filename
         node_type_name = playbook_name_to_camel_case(args.playbook)    
 
+    # Auto-generate from playbook filename
+    node_template_name = playbook_name_to_kebab_case(args.playbook)    
+        
     # Extract variables defined in the playbook
     variables = playbook.process_playbook(args.playbook)
 
     # Create TOSCA
-    tosca_output = tosca.create_tosca_file(variables, args.playbook, node_type_name)
+    tosca_output = tosca.create_tosca_file(variables, args.playbook, node_type_name, node_template_name)
 
     if args.output:
         with open(args.output, 'w') as f:

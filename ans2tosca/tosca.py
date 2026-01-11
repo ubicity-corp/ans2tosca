@@ -176,28 +176,25 @@ def generate_tosca_node_type(variables, playbook_path):
             'type': get_tosca_type(var_value),
         }
         
-        # Convert any get_input references to get_property for node type context
-        converted_value = convert_get_input_to_get_property(var_value)
-        
         # Add default value only if it exists (could be a TOSCA function)
         if has_default:
-            prop_def['default'] = converted_value
+            prop_def['default'] = var_value
         
         # For complex types, reference the generated data type
-        if isinstance(converted_value, dict) and not isinstance(converted_value, dict) or (isinstance(converted_value, dict) and '$get_property' not in converted_value and 'concat' not in converted_value):
+        if isinstance(var_value, dict) and not isinstance(var_value, dict) or (isinstance(var_value, dict) and '$get_property' not in var_value and '$concat' not in var_value):
             prop_def['type'] = f'AnsibleData_{prop_name}'
-        elif isinstance(converted_value, list) and not isinstance(converted_value, dict):
-            if converted_value and isinstance(converted_value[0], dict):
+        elif isinstance(var_value, list) and not isinstance(var_value, dict):
+            if var_value and isinstance(var_value[0], dict):
                 prop_def['type'] = 'list'
                 prop_def['entry_schema'] = {'type': f'AnsibleData_{prop_name}_item'}
             else:
                 prop_def['type'] = 'list'
-                prop_def['entry_schema'] = {'type': infer_list_entry_type(converted_value)}
+                prop_def['entry_schema'] = {'type': infer_list_entry_type(var_value)}
         
         # Add description based on type
-        if isinstance(converted_value, dict) and 'concat' not in converted_value and '$get_property' not in converted_value:
+        if isinstance(var_value, dict) and 'concat' not in var_value and '$get_property' not in var_value:
             prop_def['description'] = f'Configuration for {prop_name}'
-        elif isinstance(converted_value, list):
+        elif isinstance(var_value, list):
             prop_def['description'] = f'List of {prop_name}'
         else:
             prop_def['description'] = f'Value for {prop_name}'
@@ -212,7 +209,7 @@ def generate_tosca_node_type(variables, playbook_path):
     
     # Create the node type definition
     node_type = {
-        'derived_from': 'Root',
+        'derived_from': 'ubct:Root',
         'description': f'Node type generated from Ansible playbook {playbook_path}',
         'properties': properties,
         'interfaces': {
@@ -222,7 +219,7 @@ def generate_tosca_node_type(variables, playbook_path):
                         'implementation': {
                             'primary': {
                                 'file': playbook_path,
-                                'type': 'Ansible'
+                                'type': 'ubct:Ansible'
                                 }
                         },
                         'inputs': operation_inputs
@@ -235,49 +232,116 @@ def generate_tosca_node_type(variables, playbook_path):
     return node_type
 
 
-def convert_get_input_to_get_property(value):
+def generate_service_template_inputs(variables):
+    """Generate service template input definitions from Ansible variables.
     """
-    Recursively convert get_input references to get_property references.
-    This is needed when converting from inputs (topology template) to properties (node type).
-    """
-    if isinstance(value, dict):
-        if '$get_input' in value:
-            # Convert get_input to get_property
-            return {'$get_property': ['SELF', value['$get_input']]}
-        elif 'concat' in value:
-            # Process concat array
-            new_concat = []
-            for item in value['concat']:
-                new_concat.append(convert_get_input_to_get_property(item))
-            return {'concat': new_concat}
-        else:
-            # Recursively process other dicts
-            return {k: convert_get_input_to_get_property(v) for k, v in value.items()}
-    elif isinstance(value, list):
-        return [convert_get_input_to_get_property(item) for item in value]
-    else:
-        return value
+    inputs = {}
+    
+    for var_name, var_value in variables.items():
+        # Skip registered variables and external files
+        if var_name.startswith('register.') or var_name.startswith('vars_files.'):
+            continue
+        
+        # Only process top-level vars
+        if not var_name.startswith('vars.'):
+            continue
+        
+        # Remove 'vars.' prefix for property name
+        prop_name = var_name.replace('vars.', '', 1)
+        
+        # Skip if it's a nested field (contains dots after vars.)
+        if '.' in prop_name or '[' in prop_name:
+            continue
+        
+        # Determine if property is required based on whether it has a default value
+        # Properties with defaults are not required, those without are required
+        has_default = var_value is not None
+        
+        prop_def = {
+            'type': get_tosca_type(var_value),
+        }
+        
+        # Add default value only if it exists (could be a TOSCA function)
+        if has_default:
+            prop_def['required'] = False
+        
+        # For complex types, reference the generated data type
+        if isinstance(var_value, dict) and not isinstance(var_value, dict) or (isinstance(var_value, dict) and '$get_property' not in var_value and '$concat' not in var_value):
+            prop_def['type'] = f'AnsibleData_{prop_name}'
+        elif isinstance(var_value, list) and not isinstance(var_value, dict):
+            if var_value and isinstance(var_value[0], dict):
+                prop_def['type'] = 'list'
+                prop_def['entry_schema'] = {'type': f'AnsibleData_{prop_name}_item'}
+            else:
+                prop_def['type'] = 'list'
+                prop_def['entry_schema'] = {'type': infer_list_entry_type(var_value)}
+        inputs[prop_name] = prop_def
+    
+    return inputs
 
 
-def format_tosca_output(tosca_types, tosca_node_type=None, node_type_name="AnsibleNode"):
+def generate_tosca_node_template(variables, node_type_name):
+    """Generate TOSCA node template definition from Ansible variables.
+    Property assignments retrieve values from inputs.
+    """
+    properties = {}
+    
+    for var_name, var_value in variables.items():
+        # Skip registered variables and external files
+        if var_name.startswith('register.') or var_name.startswith('vars_files.'):
+            continue
+        
+        # Only process top-level vars
+        if not var_name.startswith('vars.'):
+            continue
+        
+        # Remove 'vars.' prefix for property name
+        prop_name = var_name.replace('vars.', '', 1)
+        
+        # Skip if it's a nested field (contains dots after vars.)
+        if '.' in prop_name or '[' in prop_name:
+            continue
+        
+        properties[prop_name] = {'$get_input': prop_name}
+    
+    # Create the node type definition
+    node_template = {
+        'type': node_type_name,
+        'properties': properties,
+        }
+    
+    return node_template
+
+
+def format_tosca_output(tosca_types, tosca_node_type, node_type_name, inputs,
+                        tosca_node_template, node_template_name):
     """Format TOSCA types and node type as YAML string."""
     tosca_document = {
         'tosca_definitions_version': 'tosca_2_0',
-        'description': 'TOSCA node type wrapper for Ansible playbook'
+        'description': 'TOSCA node type wrapper for Ansible playbook',
+        'imports': [
+            {
+                'profile': 'com.ubicity:2.0',
+                'namespace': 'ubct'
+                }
+        ]
     }
     
-    if tosca_types:
-        tosca_document['data_types'] = tosca_types
-    
-    if tosca_node_type:
-        tosca_document['node_types'] = {
-            node_type_name: tosca_node_type
+    tosca_document['data_types'] = tosca_types
+    tosca_document['node_types'] = {
+        node_type_name: tosca_node_type
+    }
+    tosca_document['service_template'] = {
+        'inputs': inputs,
+        'node_templates': {
+            node_template_name: tosca_node_template
         }
+    }
     
     return yaml.dump(tosca_document, default_flow_style=False, sort_keys=False, width=120)
 
 
-def create_tosca_file(variables, playbook_path, node_type_name):
+def create_tosca_file(variables, playbook_path, node_type_name, node_template_name):
 
     # Generate TOSCA data types
     tosca_types = generate_tosca_data_types(variables)
@@ -285,7 +349,13 @@ def create_tosca_file(variables, playbook_path, node_type_name):
     # Generate TOSCA node type
     tosca_node_type = generate_tosca_node_type(variables, playbook_path)
 
+    # Generate TOSCA service template inputs
+    tosca_inputs = generate_service_template_inputs(variables)
+
+    # Generate TOSCA node template
+    tosca_node_template = generate_tosca_node_template(variables, node_type_name)
+
     # Create TOSCA definitions
-    tosca_output = format_tosca_output(tosca_types, tosca_node_type, node_type_name)
+    tosca_output = format_tosca_output(tosca_types, tosca_node_type, node_type_name, tosca_inputs, tosca_node_template, node_template_name)
 
     return tosca_output
